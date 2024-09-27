@@ -1,5 +1,6 @@
 package com.openclassrooms.tourguide.service;
 
+import com.openclassrooms.tourguide.dto.AttractionDTO;
 import com.openclassrooms.tourguide.helper.InternalTestHelper;
 import com.openclassrooms.tourguide.tracker.Tracker;
 import com.openclassrooms.tourguide.user.User;
@@ -7,14 +8,7 @@ import com.openclassrooms.tourguide.user.UserReward;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Random;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -95,15 +89,29 @@ public class TourGuideService {
 		return visitedLocation;
 	}
 
-	public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-		List<Attraction> nearbyAttractions = new ArrayList<>();
-		for (Attraction attraction : gpsUtil.getAttractions()) {
-			if (rewardsService.isWithinAttractionProximity(attraction, visitedLocation.location)) {
-				nearbyAttractions.add(attraction);
-			}
-		}
+	public List<AttractionDTO> getNearByAttractions(VisitedLocation visitedLocation, User user) {
 
+		List<AttractionDTO> nearbyAttractions = new ArrayList<>();
+		List<Attraction> attractions = gpsUtil.getAttractions();
+
+		attractions = attractions.stream().sorted(Comparator.comparingDouble(attraction -> rewardsService.getDistance(visitedLocation.location, attraction))).limit(5).toList();
+
+		for (Attraction attraction : attractions) {
+			nearbyAttractions.add(createAttractionDTO(attraction, visitedLocation, user));
+		}
 		return nearbyAttractions;
+	}
+
+	private AttractionDTO createAttractionDTO(Attraction attraction, VisitedLocation visitedLocation, User user) {
+		return new AttractionDTO(
+				attraction.attractionName,
+				attraction.latitude,
+				attraction.longitude,
+				visitedLocation.location.latitude,
+				visitedLocation.location.longitude,
+				rewardsService.getDistance(visitedLocation.location, attraction),
+				rewardsService.getRewardPoints(attraction, user)
+		);
 	}
 
 	private void addShutDownHook() {
