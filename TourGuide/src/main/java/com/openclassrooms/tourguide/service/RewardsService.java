@@ -3,8 +3,10 @@ package com.openclassrooms.tourguide.service;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.stream.Collectors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+import lombok.Setter;
 import org.springframework.stereotype.Service;
 
 import gpsUtil.GpsUtil;
@@ -21,48 +23,44 @@ public class RewardsService {
 
 	// proximity in miles
     private int defaultProximityBuffer = 10;
-	private int proximityBuffer = defaultProximityBuffer;
-	private int attractionProximityRange = 200;
-	private final GpsUtil gpsUtil;
+	@Setter
+    private int proximityBuffer = defaultProximityBuffer;
+    private final GpsUtil gpsUtil;
 	private final RewardCentral rewardsCentral;
+	private final ExecutorService executorService = Executors.newFixedThreadPool(500);
 
 	public RewardsService(GpsUtil gpsUtil, RewardCentral rewardCentral) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsCentral = rewardCentral;
 	}
-	
-	public void setProximityBuffer(int proximityBuffer) {
-		this.proximityBuffer = proximityBuffer;
-	}
-	
-	public void setDefaultProximityBuffer() {
-		proximityBuffer = defaultProximityBuffer;
-	}
 
-	public void calculateRewards(User user) {
-		List<VisitedLocation> userLocations = new CopyOnWriteArrayList<>(user.getVisitedLocations());
-		List<Attraction> attractions = gpsUtil.getAttractions();
-		List<UserReward> userRewards = new CopyOnWriteArrayList<>(user.getUserRewards());
-		List<CompletableFuture<Void>> futures = userLocations.stream()
-				.map(visitedLocation -> CompletableFuture.runAsync(() -> {
-					for (Attraction attraction : attractions) {
-						if (userRewards.stream().noneMatch(r -> r.attraction.attractionName.equals(attraction.attractionName))) {
-							if (nearAttraction(visitedLocation, attraction)) {
-								userRewards.add(new UserReward(visitedLocation, attraction, getRewardPoints(attraction, user)));
-							}
+    public CompletableFuture<Void> calculateRewards(User user) {
+		return CompletableFuture.runAsync(() -> {
+			List<VisitedLocation> userLocations = new CopyOnWriteArrayList<>(user.getVisitedLocations());
+			List<Attraction> attractions = gpsUtil.getAttractions();
+			List<UserReward> userRewards = new CopyOnWriteArrayList<>(user.getUserRewards());
+
+			for (VisitedLocation visitedLocation : userLocations) {
+				for (Attraction attraction : attractions) {
+					boolean alreadyRewarded = userRewards.parallelStream().anyMatch(userReward -> userReward.attraction.attractionName.equals(attraction.attractionName));
+					if (!alreadyRewarded) {
+						if (nearAttraction(visitedLocation, attraction)) {
+							userRewards.add(new UserReward(visitedLocation, attraction, getRewardPoints(attraction, user)));
 						}
 					}
-				})).collect(Collectors.toList());
-		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-		user.setUserRewards(userRewards);
+				}
+			}
+			user.setUserRewards(userRewards);
+		}, executorService);
 	}
 
 	public boolean isWithinAttractionProximity(Attraction attraction, Location location) {
-		return getDistance(attraction, location) > attractionProximityRange ? false : true;
+        int attractionProximityRange = 200;
+        return !(getDistance(attraction, location) > attractionProximityRange);
 	}
 	
 	private boolean nearAttraction(VisitedLocation visitedLocation, Attraction attraction) {
-		return getDistance(attraction, visitedLocation.location) > proximityBuffer ? false : true;
+		return !(getDistance(attraction, visitedLocation.location) > proximityBuffer);
 	}
 	
 	public int getRewardPoints(Attraction attraction, User user) {
@@ -79,8 +77,7 @@ public class RewardsService {
                                + Math.cos(lat1) * Math.cos(lat2) * Math.cos(lon1 - lon2));
 
         double nauticalMiles = 60 * Math.toDegrees(angle);
-        double statuteMiles = STATUTE_MILES_PER_NAUTICAL_MILE * nauticalMiles;
-        return statuteMiles;
+        return STATUTE_MILES_PER_NAUTICAL_MILE * nauticalMiles;
 	}
 
 }
